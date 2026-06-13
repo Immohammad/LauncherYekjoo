@@ -123,9 +123,15 @@ allprojects {
     }
 }
 
-final def buildCommit = providers.exec {
-    commandLine('git', 'rev-parse', '--short=7', 'HEAD')
-}.standardOutput.asText.get().trim()
+final def buildCommit = {
+    try {
+        providers.exec {
+            commandLine('git', 'rev-parse', '--short=7', 'HEAD')
+        }.standardOutput.asText.get().trim()
+    } catch (Exception ignored) {
+        "unknown"
+    }
+}()
 
 final def ciBuild = System.getenv("CI") == "true"
 final def ciRef = System.getenv("GITHUB_REF") ?: ""
@@ -221,7 +227,7 @@ android {
 
         debug {
             applicationIdSuffix ".debug"
-            resValue("string", "derived_app_name", "Lawnchair (Debug)")
+            resValue("string", "derived_app_name", "لانچر پرچمدار (Debug)")
 
             manifestPlaceholders.quickstepMinSdk = "0"
             manifestPlaceholders.quickstepMaxSdk = "100000"
@@ -230,7 +236,7 @@ android {
         }
 
         release {
-            resValue("string", "derived_app_name", "Lawnchair")
+            resValue("string", "derived_app_name", "لانچر پرچمدار")
             minifyEnabled true
             shrinkResources true
             pseudoLocalesEnabled false
