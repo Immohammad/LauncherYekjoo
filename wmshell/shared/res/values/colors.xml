@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material You dynamic color fallback for non-AOSP builds -->
+    <color name="materialColorPrimaryContainer">@android:color/system_accent1_100</color>
+</resources>

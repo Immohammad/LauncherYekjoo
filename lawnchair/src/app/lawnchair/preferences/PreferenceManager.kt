@@ -78,6 +78,8 @@ class PreferenceManager @Inject constructor(
     val feedProvider = StringPref("pref_feedProvider", "")
     val ignoreFeedWhitelist = BoolPref("pref_ignoreFeedWhitelist", false)
     val launcherTheme = StringPref("pref_launcherTheme", "system")
+    val onboardingCompleted = BoolPref("pref_onboardingCompleted", false)
+    val onboardingLastReminderMs = LongPref("pref_onboardingLastReminderMs", 0L)
     val overrideWindowCornerRadius = BoolPref("pref_overrideWindowCornerRadius", false, recreate)
     val windowCornerRadius = IntPref("pref_windowCornerRadius", 80, recreate)
     val autoLaunchRoot = BoolPref("pref_autoLaunchRoot", false)

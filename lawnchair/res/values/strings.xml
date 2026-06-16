@@ -259,6 +259,28 @@
 
     <string name="set_default_launcher_tip">To access shortcuts and additional features, set Lawnchair as your default launcher</string>
 
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Welcome</string>
+    <string name="onboarding_welcome_description">A quick setup to get you going.</string>
+    <string name="onboarding_default_launcher_title">Default launcher</string>
+    <string name="onboarding_default_launcher_description">So Home always brings you here.</string>
+    <string name="onboarding_notifications_title">Notifications</string>
+    <string name="onboarding_notifications_description">To show notification dots on icons.</string>
+    <string name="onboarding_done_title">All set</string>
+    <string name="onboarding_done_description">You can change these later in Settings.</string>
+    <string name="onboarding_get_started">Start</string>
+    <string name="onboarding_set_default">Set as default</string>
+    <string name="onboarding_allow_notifications">Allow</string>
+    <string name="onboarding_finish">Done</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_try_again">Try again</string>
+    <string name="onboarding_setup_subtitle">Your setup</string>
+    <string name="onboarding_active">Active</string>
+    <string name="onboarding_launcher_inactive">Not active</string>
+    <string name="onboarding_change">Change</string>
+    <string name="onboarding_not_allowed">Not allowed</string>
+
     <string name="notification_dots">Notification dots</string>
     <string name="show_notification_count">Show notification counter</string>
     <string name="notification_dots_color">Notification dot color</string>

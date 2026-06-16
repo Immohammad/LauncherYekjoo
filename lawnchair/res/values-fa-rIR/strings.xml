@@ -197,6 +197,29 @@
 
     -->
     <string name="set_default_launcher_tip">برای دسترسی به میانبرها و ویژگی‌های اضافی، Lawnchair را به عنوان راه‌انداز پیش‌فرض خود تنظیم کنید</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">خوش اومدی</string>
+    <string name="onboarding_welcome_description">یه راه‌اندازی کوتاه تا همه چیز آماده بشه.</string>
+    <string name="onboarding_default_launcher_title">لانچر پیش‌فرض</string>
+    <string name="onboarding_default_launcher_description">تا با هر بار زدن دکمه‌ی Home بیای اینجا.</string>
+    <string name="onboarding_notifications_title">اعلان‌ها</string>
+    <string name="onboarding_notifications_description">برای نمایش نقطه‌ی اعلان روی آیکن‌ها.</string>
+    <string name="onboarding_done_title">تمومه</string>
+    <string name="onboarding_done_description">هر زمان خواستی می‌تونی از تنظیمات تغییرشون بدی.</string>
+    <string name="onboarding_get_started">شروع</string>
+    <string name="onboarding_set_default">انتخاب به‌عنوان پیش‌فرض</string>
+    <string name="onboarding_allow_notifications">اجازه میدم</string>
+    <string name="onboarding_finish">پایان</string>
+    <string name="onboarding_skip">رد کن</string>
+    <string name="onboarding_continue">ادامه</string>
+    <string name="onboarding_try_again">تلاش مجدد</string>
+    <string name="onboarding_setup_subtitle">وضعیت تنظیمات</string>
+    <string name="onboarding_active">فعاله</string>
+    <string name="onboarding_launcher_inactive">فعال نیست</string>
+    <string name="onboarding_change">تغییر</string>
+    <string name="onboarding_not_allowed">مجاز نیست</string>
+
     <string name="notification_dots">نشان اعلان‌ها</string>
     <string name="show_notification_count">نشان‌دادن تعداد اعلان‌ها</string>
     <string name="notification_dots_color">رنگ نشان اعلان‌ها</string>

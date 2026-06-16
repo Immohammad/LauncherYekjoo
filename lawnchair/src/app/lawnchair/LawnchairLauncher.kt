@@ -45,9 +45,11 @@ import app.lawnchair.preferences2.PreferenceManager2
 import app.lawnchair.root.RootHelperManager
 import app.lawnchair.root.RootNotAvailableException
 import app.lawnchair.theme.ThemeProvider
+import app.lawnchair.ui.onboarding.OnboardingActivity
 import app.lawnchair.ui.popup.LauncherOptionsPopup
 import app.lawnchair.ui.popup.LawnchairShortcut
 import app.lawnchair.util.getThemedIconPacksInstalled
+import app.lawnchair.util.isDefaultLauncher
 import app.lawnchair.util.unsafeLazy
 import app.lawnchair.views.LawnchairFloatingSurfaceView
 import com.android.launcher3.AbstractFloatingView
@@ -242,6 +244,28 @@ class LawnchairLauncher : QuickstepLauncher() {
         reloadIconsIfNeeded()
 
         lifecycleScope.launch { AppDatabase.INSTANCE.get(this@LawnchairLauncher).checkpoint() }
+
+        maybeShowOnboarding()
+    }
+
+    private var onboardingLaunched = false
+
+    private fun maybeShowOnboarding() {
+        if (onboardingLaunched) return
+        val completed = prefs.onboardingCompleted.get()
+        val now = System.currentTimeMillis()
+        val shouldShow = if (!completed) {
+            true
+        } else if (!isDefaultLauncher()) {
+            now - prefs.onboardingLastReminderMs.get() > ONBOARDING_REMINDER_INTERVAL_MS
+        } else {
+            false
+        }
+        if (shouldShow) {
+            onboardingLaunched = true
+            prefs.onboardingLastReminderMs.set(now)
+            startActivity(OnboardingActivity.createIntent(this))
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -500,6 +524,7 @@ class LawnchairLauncher : QuickstepLauncher() {
     companion object {
         private const val FLAG_RECREATE = 1 shl 0
         private const val FLAG_RESTART = 1 shl 1
+        private const val ONBOARDING_REMINDER_INTERVAL_MS = 24L * 60L * 60L * 1000L
 
         var sRestartFlags = 0
 
