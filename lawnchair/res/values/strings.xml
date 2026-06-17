@@ -280,6 +280,8 @@
     <string name="onboarding_launcher_inactive">Not active</string>
     <string name="onboarding_change">Change</string>
     <string name="onboarding_not_allowed">Not allowed</string>
+    <string name="onboarding_swipe_hint_title">Swipe left</string>
+    <string name="onboarding_swipe_hint_subtitle">After becoming default, swipe left on the home screen to open the feed</string>
 
     <string name="notification_dots">Notification dots</string>
     <string name="show_notification_count">Show notification counter</string>

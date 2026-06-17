@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -17,6 +18,8 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.animation.LinearInterpolator
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -43,8 +46,8 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     private var wasOpenAtInteractionStart = false
 
     private var hasLoaded = false
+    private val loadedTabs = mutableSetOf<String>()
     private var lastRefreshTime = 0L
-    private var refreshPill: View? = null
     private var refreshLabel: TextView? = null
     private var refreshIcon: TextView? = null
     private var iconAnimator: ObjectAnimator? = null
@@ -54,6 +57,9 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     private var tabBar: LinearLayout? = null
     private var tabNewsButton: TextView? = null
     private var tabMarketsButton: TextView? = null
+    private var backButton: TextView? = null
+    private var navBar: View? = null
+    private var currentWebUrl: String? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val labelUpdateRunnable = object : Runnable {
@@ -64,11 +70,8 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     }
 
     companion object {
-        private const val YEKJO_URL = "https://yekjoo.ir/"
-        private const val YEKJO_MARKETS_URL = "https://yekjoo.ir/markets"
-        // Hides the site's own bottom tab bar and resets body bottom padding.
-        // Selectors cover common React/Next.js nav patterns; refine against actual DOM if needed.
-        private const val HIDE_NAV_JS = "(function(){var s=document.createElement('style');s.textContent='nav,footer,[class*=BottomNav],[class*=bottomNav],[class*=bottom-nav],[class*=BottomBar],[class*=bottomBar],[class*=TabBar],[class*=tabBar],[class*=tab-bar],[class*=tabbar]{display:none!important}body,#__next,#root{padding-bottom:0!important;margin-bottom:0!important}';document.head.appendChild(s);['nav','footer','[class*=BottomNav]','[class*=bottomNav]','[class*=BottomBar]','[class*=TabBar]','[class*=tabBar]'].forEach(function(q){try{document.querySelectorAll(q).forEach(function(el){el.style.setProperty('display','none','important');var p=el.parentElement;if(p&&p.children.length<=2&&p!==document.body&&p.tagName!='MAIN'){p.style.setProperty('display','none','important');}});}catch(e){}});document.body.style.setProperty('padding-bottom','0','important');var n=document.getElementById('__next');if(n)n.style.setProperty('padding-bottom','0','important');})();"
+        private const val YEKJO_URL = "https://yekjoo.ir/?utm_source=yekjoo&utm_medium=launcher"
+        private const val YEKJO_MARKETS_URL = "https://yekjoo.ir/markets?utm_source=yekjoo&utm_medium=launcher"
         private const val LABEL_UPDATE_INTERVAL_MS = 60L * 1000
         // Swipe 25% of screen width to open; swipe 25% to close (close snaps below 0.75f)
         private const val OPEN_SNAP_THRESHOLD = 0.25f
@@ -96,17 +99,17 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                     isTouchTracking = false
                     wasOpenAtInteractionStart = currentProgress >= 0.99f
                     snapAnimator?.cancel()
+                    // DragLayer intercepts horizontal swipes for workspace scroll even when
+                    // the panel covers the screen. Block that so the WebView can handle
+                    // right swipes (e.g. carousel scroll) without the launcher stealing them.
+                    if (wasOpenAtInteractionStart) {
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                    }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!isTouchTracking) {
                         val dx = ev.x - startX
                         val dy = ev.y - startY
-                        // If the WebView child is on a scrollable element, it will call
-                        // requestDisallowInterceptTouchEvent(true) before touchSlop is exceeded,
-                        // which prevents this block from running entirely. So we only reach here
-                        // when the touch is on a non-scrollable area.
-                        // Close = swipe finger left so the panel follows the finger off-screen
-                        // to the left (the direction it came from). Same in fa and en builds.
                         val isSwipingToClose = dx < -touchSlop
                         if (isSwipingToClose && abs(dx) > abs(dy)) {
                             isTouchTracking = true
@@ -161,6 +164,8 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         }
         panelLayout.addView(contentLayout)
 
+        addTopNavBar(contentLayout)
+
         val wv = WebView(launcher).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -169,9 +174,18 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
             )
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    currentWebUrl = url
                     currentLoadHadError = false
                     hideErrorView()
                     startIconRotation()
+                    updateNavBarState()
+                }
+                override fun onReceivedSslError(
+                    view: WebView?,
+                    handler: SslErrorHandler?,
+                    error: android.net.http.SslError?,
+                ) {
+                    handler?.proceed()
                 }
                 override fun onReceivedError(
                     view: WebView?,
@@ -184,12 +198,52 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                     showErrorView()
                 }
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    currentWebUrl = url ?: currentWebUrl
                     stopIconRotation()
                     if (currentLoadHadError) return
-                    lastRefreshTime = System.currentTimeMillis()
-                    refreshPill?.visibility = View.VISIBLE
-                    updateRefreshLabel()
-                    view?.evaluateJavascript(HIDE_NAV_JS, null)
+                    if (isRootUrl(url)) {
+                        lastRefreshTime = System.currentTimeMillis()
+                        refreshLabel?.visibility = View.VISIBLE
+                        updateRefreshLabel()
+                    } else {
+                        refreshLabel?.visibility = View.GONE
+                    }
+                    updateNavBarState()
+                }
+                // Catches SPA pushState navigation (Next.js client-side routing).
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    if (!isReload) {
+                        currentWebUrl = url
+                        updateNavBarState()
+                    }
+                }
+            }
+            // Redirect target="_blank" / window.open() links into the same WebView so
+            // back navigation stays intact and the user never leaves the overlay.
+            webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: Message?,
+                ): Boolean {
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                    val temp = WebView(view!!.context)
+                    temp.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            v: WebView?,
+                            request: WebResourceRequest?,
+                        ): Boolean {
+                            val url = request?.url?.toString() ?: return true
+                            view.loadUrl(url)
+                            temp.destroy()
+                            return true
+                        }
+                    }
+                    transport.webView = temp
+                    resultMsg.sendToTarget()
+                    return true
                 }
             }
             settings.apply {
@@ -199,7 +253,7 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                 useWideViewPort = true
                 cacheMode = WebSettings.LOAD_DEFAULT
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                setSupportMultipleWindows(true)
             }
         }
         contentLayout.addView(wv)
@@ -207,7 +261,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         panel = panelLayout
 
         addErrorView(panelLayout)
-        addRefreshPill(panelLayout)
         addTabBar(contentLayout)
 
         rootView.addView(panelLayout)
@@ -228,25 +281,120 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         launcher.setLauncherOverlay(this)
     }
 
+    private fun addTopNavBar(contentLayout: LinearLayout) {
+        val context = contentLayout.context
+        val density = context.resources.displayMetrics.density
+        fun dp(value: Float): Int = (density * value).toInt()
+
+        val bar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#1C1C1E"))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+        }
+
+        val back = TextView(context).apply {
+            text = "←"
+            textSize = 17f
+            setTextColor(Color.parseColor("#6E9EE8"))
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            isClickable = true
+            isFocusable = true
+            visibility = View.INVISIBLE
+            minWidth = dp(40f)
+            setPadding(dp(14f), dp(7f), dp(8f), dp(7f))
+            setOnClickListener { navigateBack() }
+        }
+
+        val spacer = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+
+        val refreshArea = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(8f), dp(7f), dp(14f), dp(7f))
+            setOnClickListener { userTriggeredRefresh() }
+        }
+
+        val icon = TextView(context).apply {
+            text = "↻"
+            setTextColor(Color.parseColor("#6E9EE8"))
+            textSize = 15f
+            includeFontPadding = false
+        }
+
+        val label = TextView(context).apply {
+            text = ""
+            setTextColor(Color.parseColor("#8E8E93"))
+            textSize = 11f
+            setTypeface(null, Typeface.NORMAL)
+            includeFontPadding = false
+            setPadding(dp(6f), 0, 0, 0)
+            visibility = View.GONE
+        }
+
+        refreshArea.addView(icon)
+        refreshArea.addView(label)
+        bar.addView(back)
+        bar.addView(spacer)
+        bar.addView(refreshArea)
+
+        bar.setOnApplyWindowInsetsListener { v, insets ->
+            val topInset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                insets.getInsets(WindowInsets.Type.statusBars()).top
+            } else {
+                @Suppress("DEPRECATION")
+                insets.systemWindowInsetTop
+            }
+            v.setPadding(0, topInset, 0, 0)
+            insets
+        }
+
+        contentLayout.addView(bar)
+
+        val separator = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+            setBackgroundColor(Color.parseColor("#2C2C2E"))
+        }
+        contentLayout.addView(separator)
+
+        navBar = bar
+        backButton = back
+        refreshIcon = icon
+        refreshLabel = label
+    }
+
+    private fun isRootUrl(url: String?): Boolean {
+        if (url == null) return false
+        val normalized = url.trimEnd('/')
+        return normalized == YEKJO_URL.trimEnd('/') || normalized == YEKJO_MARKETS_URL.trimEnd('/')
+    }
+
+    private fun updateNavBarState() {
+        val atRoot = isRootUrl(currentWebUrl)
+        backButton?.visibility = if (atRoot) View.INVISIBLE else View.VISIBLE
+        if (!atRoot) refreshLabel?.visibility = View.GONE
+    }
+
+    private fun navigateBack() {
+        val wv = webView ?: return
+        if (wv.canGoBack()) wv.goBack()
+    }
+
     private fun triggerInitialLoadIfNeeded() {
         if (hasLoaded) return
         val wv = webView ?: return
         hasLoaded = true
+        loadedTabs.add(YEKJO_URL)
         wv.loadUrl(YEKJO_URL)
-    }
-
-    // Called when the user opens the panel via swipe. Old content stays visible
-    // (WebView does not blank during reload) and the spinning icon + last-update
-    // pill remain on top until onPageFinished updates them.
-    private fun triggerSwipeRefresh() {
-        val wv = webView ?: return
-        if (!hasLoaded) {
-            hasLoaded = true
-            wv.loadUrl(YEKJO_URL)
-            return
-        }
-        if (iconAnimator?.isRunning == true) return
-        wv.reload()
     }
 
     private fun userTriggeredRefresh() {
@@ -262,81 +410,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         val p = panel ?: return
         val width = (p.parent as? View)?.width?.takeIf { it > 0 } ?: p.width
         p.translationX = -width * (1f - progress)
-    }
-
-    private fun addRefreshPill(panelLayout: FrameLayout) {
-        val context = panelLayout.context
-        val density = context.resources.displayMetrics.density
-        fun dp(value: Float): Int = (density * value).toInt()
-
-        val pill = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = density * 22f
-                setColors(intArrayOf(
-                    Color.parseColor("#EE0D1B2E"),
-                    Color.parseColor("#EE07111F"),
-                ))
-                orientation = GradientDrawable.Orientation.TL_BR
-                setStroke(dp(1f), Color.parseColor("#664D9FFF"))
-            }
-            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
-            elevation = dp(6f).toFloat()
-            isClickable = true
-            isFocusable = true
-            visibility = View.GONE
-            // force LTR within the pill so the icon always sits left of the text
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-        }
-
-        val icon = TextView(context).apply {
-            text = "↻"
-            setTextColor(Color.parseColor("#82B1FF"))
-            textSize = 17f
-            includeFontPadding = false
-        }
-
-        val label = TextView(context).apply {
-            text = ""
-            setTextColor(Color.parseColor("#DCE8FF"))
-            textSize = 12f
-            setTypeface(null, Typeface.BOLD)
-            includeFontPadding = false
-            setPadding(dp(8f), 0, 0, 0)
-        }
-
-        pill.addView(icon)
-        pill.addView(label)
-        pill.setOnClickListener { userTriggeredRefresh() }
-
-        val params = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.RIGHT
-            rightMargin = dp(16f)
-            topMargin = dp(16f)
-        }
-        panelLayout.addView(pill, params)
-
-        pill.setOnApplyWindowInsetsListener { v, insets ->
-            val topInset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                insets.getInsets(WindowInsets.Type.statusBars()).top
-            } else {
-                @Suppress("DEPRECATION")
-                insets.systemWindowInsetTop
-            }
-            val lp = v.layoutParams as FrameLayout.LayoutParams
-            lp.topMargin = dp(4f) + topInset
-            v.layoutParams = lp
-            insets
-        }
-
-        refreshPill = pill
-        refreshIcon = icon
-        refreshLabel = label
     }
 
     private fun addErrorView(panelLayout: FrameLayout) {
@@ -436,17 +509,16 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
 
     private fun showErrorView() {
         errorView?.visibility = View.VISIBLE
-        refreshPill?.visibility = View.GONE
     }
 
     private fun hideErrorView() {
         errorView?.visibility = View.GONE
-        // pill visibility is restored by onPageFinished only when load succeeds
     }
 
     private fun updateRefreshLabel() {
         val label = refreshLabel ?: return
         if (lastRefreshTime == 0L) return
+        if (!isRootUrl(currentWebUrl)) return
         label.text = formatRelativeTime(System.currentTimeMillis() - lastRefreshTime)
     }
 
@@ -546,7 +618,10 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         if (currentTabUrl == url) return
         currentTabUrl = url
         updateTabBarSelection()
-        webView?.loadUrl(url)
+        if (url !in loadedTabs) {
+            loadedTabs.add(url)
+            webView?.loadUrl(url)
+        }
     }
 
     private fun updateTabBarSelection() {
@@ -565,13 +640,14 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         panel?.let { (it.parent as? ViewGroup)?.removeView(it) }
         panel = null
         webView = null
-        refreshPill = null
         refreshIcon = null
         refreshLabel = null
         errorView = null
         tabBar = null
         tabNewsButton = null
         tabMarketsButton = null
+        backButton = null
+        navBar = null
     }
 
     override fun onActivityStarted() {
@@ -598,26 +674,33 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         webView?.destroy()
         webView = null
         panel = null
-        refreshPill = null
         refreshIcon = null
         refreshLabel = null
         errorView = null
         tabBar = null
         tabNewsButton = null
         tabMarketsButton = null
+        backButton = null
+        navBar = null
         hasLoaded = false
+        loadedTabs.clear()
         lastRefreshTime = 0L
         currentLoadHadError = false
         currentTabUrl = YEKJO_URL
+        currentWebUrl = null
     }
 
     override fun onScrollInteractionBegin() {
+        // When the panel is fully open, ignore workspace-side gesture starts so that
+        // horizontal swipes inside the WebView (e.g. carousel) don't close the feed.
+        if (currentProgress >= 0.99f) return
         snapAnimator?.cancel()
         wasOpenAtInteractionStart = currentProgress >= 0.99f
         triggerInitialLoadIfNeeded()
     }
 
     override fun onScrollInteractionEnd() {
+        if (currentProgress >= 0.99f) return
         snapTo(resolveSnapTarget())
     }
 
@@ -641,6 +724,9 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     }
 
     override fun onScrollChange(progress: Float, rtl: Boolean) {
+        // If the panel is fully open and the workspace is trying to decrease progress
+        // (e.g. triggered by a carousel swipe), discard it — the WebView owns that touch.
+        if (currentProgress >= 0.99f && progress < currentProgress) return
         if (progress > 0f) triggerInitialLoadIfNeeded()
         currentProgress = progress
         callbacks?.onOverlayScrollChanged(progress)

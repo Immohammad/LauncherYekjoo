@@ -191,17 +191,6 @@ private fun PreferenceGroupScope.LocalSearchSettings(
     }
     Item {
         SearchProviderPreferenceItem(
-            adapter = prefs.searchResultPeople.getAdapter(),
-            label = stringResource(id = R.string.search_pref_result_people_title),
-            description = stringResource(id = R.string.search_pref_result_contacts_description),
-            onClick = {
-                navController.navigate(SearchProviderPreference(SearchProviderId.CONTACTS))
-            },
-            enabled = rememberPermissionState(android.Manifest.permission.READ_CONTACTS).status.isGranted,
-        )
-    }
-    Item {
-        SearchProviderPreferenceItem(
             adapter = prefs.searchResultFilesToggle.getAdapter(),
             label = stringResource(R.string.search_pref_result_files_title),
             description = stringResource(R.string.search_pref_result_files_description),

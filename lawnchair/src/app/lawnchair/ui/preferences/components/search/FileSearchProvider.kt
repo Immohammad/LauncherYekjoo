@@ -136,22 +136,11 @@ fun FileSearchProvider(
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val visualMediaAccessState by viewModel.visualMediaAccessState.collectAsStateWithLifecycle()
-            val audioAccessState by viewModel.audioAccessState.collectAsStateWithLifecycle()
 
             VisualMediaSetting(
                 accessState = visualMediaAccessState,
                 adapter = prefs.searchResultVisualMedia.getAdapter(),
                 onPermissionRequest = viewModel::refreshAccessStates,
-                alwaysEnabled = allFilesAccessAdapter.state.value && allFilesAccessState == FileAccessState.Full,
-            )
-            GenericAccessSetting(
-                adapter = prefs.searchResultAudio.getAdapter(),
-                requiredPermission = android.Manifest.permission.READ_MEDIA_AUDIO,
-                switchEnabled = { audioAccessState != FileAccessState.Denied },
-                label = stringResource(R.string.search_pref_result_audio_media_title),
-                permissionTitle = stringResource(R.string.permissions_music_audio),
-                permissionDescription = stringResource(R.string.permissions_music_audio_description, appName),
-                onPermissionResult = { viewModel.refreshAccessStates() },
                 alwaysEnabled = allFilesAccessAdapter.state.value && allFilesAccessState == FileAccessState.Full,
             )
         }

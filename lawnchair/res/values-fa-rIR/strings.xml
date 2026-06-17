@@ -219,6 +219,8 @@
     <string name="onboarding_launcher_inactive">فعال نیست</string>
     <string name="onboarding_change">تغییر</string>
     <string name="onboarding_not_allowed">مجاز نیست</string>
+    <string name="onboarding_swipe_hint_title">به چپ بکش</string>
+    <string name="onboarding_swipe_hint_subtitle">بعد از پیش‌فرض شدن، تو خونه به چپ بکش تا فید باز شه</string>
 
     <string name="notification_dots">نشان اعلان‌ها</string>
     <string name="show_notification_count">نشان‌دادن تعداد اعلان‌ها</string>
