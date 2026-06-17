@@ -46,7 +46,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     private var wasOpenAtInteractionStart = false
 
     private var hasLoaded = false
-    private val loadedTabs = mutableSetOf<String>()
     private var lastRefreshTime = 0L
     private var refreshLabel: TextView? = null
     private var refreshIcon: TextView? = null
@@ -178,6 +177,7 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                     currentLoadHadError = false
                     hideErrorView()
                     startIconRotation()
+                    updateActiveTabFromUrl(url)
                     updateNavBarState()
                 }
                 override fun onReceivedSslError(
@@ -215,6 +215,7 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                     super.doUpdateVisitedHistory(view, url, isReload)
                     if (!isReload) {
                         currentWebUrl = url
+                        updateActiveTabFromUrl(url)
                         updateNavBarState()
                     }
                 }
@@ -260,7 +261,7 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         webView = wv
         panel = panelLayout
 
-        addErrorView(panelLayout)
+        addErrorView(contentLayout)
         addTabBar(contentLayout)
 
         rootView.addView(panelLayout)
@@ -286,10 +287,34 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         val density = context.resources.displayMetrics.density
         fun dp(value: Float): Int = (density * value).toInt()
 
+        val fontResId = context.resources.getIdentifier("vazirmatn_regular", "font", context.packageName)
+        val tf: Typeface = runCatching {
+            if (fontResId != 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.resources.getFont(fontResId)
+            } else null
+        }.getOrNull() ?: Typeface.DEFAULT
+
+        val accent = Color.parseColor("#0EA5E9")
+        val aR = Color.red(accent); val aG = Color.green(accent); val aB = Color.blue(accent)
+        val buttonBg     = Color.argb(31,  aR, aG, aB)
+        val buttonBorder = Color.argb(46,  aR, aG, aB)
+        val labelColor   = Color.argb(217, minOf(255, aR + 40), minOf(255, aG + 30), minOf(255, aB + 30))
+        val bgTop        = Color.argb(247, 30, 30, 34)
+        val bgBottom     = Color.argb(242, 24, 24, 28)
+        fun barBg() = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(bgTop, bgBottom))
+        val strokePx = Math.round(density)
+
+        val statusBarHeight = context.resources.let { res ->
+            val id = res.getIdentifier("status_bar_height", "dimen", "android")
+            if (id > 0) res.getDimensionPixelSize(id) else dp(24f)
+        }
+
+        // Status bar height goes into top padding so there is no separate empty spacer view.
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1C1C1E"))
+            setPadding(dp(16f), statusBarHeight + dp(8f), dp(16f), dp(8f))
+            background = barBg()
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -299,15 +324,20 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
 
         val back = TextView(context).apply {
             text = "←"
-            textSize = 17f
-            setTextColor(Color.parseColor("#6E9EE8"))
+            textSize = 16f
+            typeface = tf
+            setTextColor(accent)
             gravity = Gravity.CENTER
             includeFontPadding = false
             isClickable = true
             isFocusable = true
-            visibility = View.INVISIBLE
-            minWidth = dp(40f)
-            setPadding(dp(14f), dp(7f), dp(8f), dp(7f))
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(buttonBg)
+                setStroke(strokePx, buttonBorder)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(36f), dp(36f))
             setOnClickListener { navigateBack() }
         }
 
@@ -320,24 +350,35 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
             gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
-            setPadding(dp(8f), dp(7f), dp(14f), dp(7f))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(999f).toFloat()
+                setColor(buttonBg)
+                setStroke(strokePx, buttonBorder)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
             setOnClickListener { userTriggeredRefresh() }
         }
 
         val icon = TextView(context).apply {
             text = "↻"
-            setTextColor(Color.parseColor("#6E9EE8"))
+            setTextColor(accent)
             textSize = 15f
+            typeface = tf
             includeFontPadding = false
         }
 
         val label = TextView(context).apply {
             text = ""
-            setTextColor(Color.parseColor("#8E8E93"))
-            textSize = 11f
-            setTypeface(null, Typeface.NORMAL)
+            setTextColor(labelColor)
+            textSize = 12f
+            typeface = tf
             includeFontPadding = false
-            setPadding(dp(6f), 0, 0, 0)
+            setPadding(dp(8f), 0, 0, 0)
             visibility = View.GONE
         }
 
@@ -346,25 +387,12 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         bar.addView(back)
         bar.addView(spacer)
         bar.addView(refreshArea)
-
-        bar.setOnApplyWindowInsetsListener { v, insets ->
-            val topInset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                insets.getInsets(WindowInsets.Type.statusBars()).top
-            } else {
-                @Suppress("DEPRECATION")
-                insets.systemWindowInsetTop
-            }
-            v.setPadding(0, topInset, 0, 0)
-            insets
-        }
-
         contentLayout.addView(bar)
 
-        val separator = View(context).apply {
+        contentLayout.addView(View(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
-            setBackgroundColor(Color.parseColor("#2C2C2E"))
-        }
-        contentLayout.addView(separator)
+            setBackgroundColor(Color.argb(15, 255, 255, 255))
+        })
 
         navBar = bar
         backButton = back
@@ -374,13 +402,20 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
 
     private fun isRootUrl(url: String?): Boolean {
         if (url == null) return false
-        val normalized = url.trimEnd('/')
-        return normalized == YEKJO_URL.trimEnd('/') || normalized == YEKJO_MARKETS_URL.trimEnd('/')
+        return try {
+            val uri = android.net.Uri.parse(url)
+            val host = uri.host ?: return false
+            if (!host.contains("yekjoo")) return false
+            val path = uri.path?.trimEnd('/') ?: ""
+            path.isEmpty() || path == "/markets"
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun updateNavBarState() {
         val atRoot = isRootUrl(currentWebUrl)
-        backButton?.visibility = if (atRoot) View.INVISIBLE else View.VISIBLE
+        backButton?.visibility = if (atRoot) View.GONE else View.VISIBLE
         if (!atRoot) refreshLabel?.visibility = View.GONE
     }
 
@@ -393,7 +428,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         if (hasLoaded) return
         val wv = webView ?: return
         hasLoaded = true
-        loadedTabs.add(YEKJO_URL)
         wv.loadUrl(YEKJO_URL)
     }
 
@@ -412,8 +446,8 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         p.translationX = -width * (1f - progress)
     }
 
-    private fun addErrorView(panelLayout: FrameLayout) {
-        val context = panelLayout.context
+    private fun addErrorView(contentLayout: LinearLayout) {
+        val context = contentLayout.context
         val density = context.resources.displayMetrics.density
         fun dp(value: Float): Int = (density * value).toInt()
 
@@ -496,11 +530,12 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
             ).apply { topMargin = dp(28f) },
         )
 
-        panelLayout.addView(
+        contentLayout.addView(
             container,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
             ),
         )
 
@@ -509,10 +544,12 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
 
     private fun showErrorView() {
         errorView?.visibility = View.VISIBLE
+        webView?.visibility = View.GONE
     }
 
     private fun hideErrorView() {
         errorView?.visibility = View.GONE
+        webView?.visibility = View.VISIBLE
     }
 
     private fun updateRefreshLabel() {
@@ -618,15 +655,25 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         if (currentTabUrl == url) return
         currentTabUrl = url
         updateTabBarSelection()
-        if (url !in loadedTabs) {
-            loadedTabs.add(url)
-            webView?.loadUrl(url)
-        }
+        webView?.clearHistory()
+        webView?.loadUrl(url)
     }
 
     private fun updateTabBarSelection() {
         tabNewsButton?.setTextColor(if (currentTabUrl == YEKJO_URL) Color.WHITE else Color.parseColor("#777777"))
         tabMarketsButton?.setTextColor(if (currentTabUrl == YEKJO_MARKETS_URL) Color.WHITE else Color.parseColor("#777777"))
+    }
+
+    private fun updateActiveTabFromUrl(url: String?) {
+        if (url == null) return
+        val host = try { android.net.Uri.parse(url).host } catch (e: Exception) { null } ?: return
+        if (!host.contains("yekjoo")) return
+        val path = try { android.net.Uri.parse(url).path } catch (e: Exception) { null } ?: "/"
+        val newTabUrl = if (path.startsWith("/markets")) YEKJO_MARKETS_URL else YEKJO_URL
+        if (newTabUrl != currentTabUrl) {
+            currentTabUrl = newTabUrl
+            updateTabBarSelection()
+        }
     }
 
     override fun onAttachedToWindow() {
@@ -683,7 +730,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         backButton = null
         navBar = null
         hasLoaded = false
-        loadedTabs.clear()
         lastRefreshTime = 0L
         currentLoadHadError = false
         currentTabUrl = YEKJO_URL
