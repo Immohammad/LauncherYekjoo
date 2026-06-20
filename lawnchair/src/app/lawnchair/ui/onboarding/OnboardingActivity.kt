@@ -24,25 +24,22 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import android.net.Uri
+import android.widget.VideoView
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -50,8 +47,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -61,7 +58,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -488,63 +487,89 @@ private fun SetupScreen(onDone: () -> Unit) {
 
 @Composable
 private fun SwipeHintCard() {
-    val transition = rememberInfiniteTransition(label = "swipe-hint")
-    val offsetX by transition.animateFloat(
-        initialValue = 4f,
-        targetValue = -20f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 950, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "arrow-offset",
-    )
-    val arrowAlpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 950, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "arrow-alpha",
-    )
+    val context = LocalContext.current
+    var videoView by remember { mutableStateOf<VideoView?>(null) }
+    var isFinished by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.large)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        MaterialTheme.colorScheme.primaryContainer,
-                    ),
-                ),
-            )
-            .padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = Icons.Rounded.KeyboardArrowLeft,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = arrowAlpha),
+        Box(
             modifier = Modifier
-                .size(36.dp)
-                .offset(x = offsetX.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.large)
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.tertiaryContainer,
+                            MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                    ),
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             Text(
                 text = stringResource(R.string.onboarding_swipe_hint_title),
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = stringResource(R.string.onboarding_swipe_hint_subtitle),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Box(
+            modifier = Modifier
+                .height(220.dp)
+                .aspectRatio(9f / 16f)
+                .clip(MaterialTheme.shapes.medium)
+                .background(Color.Black)
+                .clickable {
+                    videoView?.apply {
+                        seekTo(0)
+                        start()
+                        isFinished = false
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    VideoView(ctx).apply {
+                        setVideoURI(
+                            Uri.parse("android.resource://${context.packageName}/${R.raw.swipe_demo}"),
+                        )
+                        setOnPreparedListener { mp ->
+                            mp.isLooping = false
+                            mp.setVolume(0f, 0f)
+                            start()
+                            isFinished = false
+                        }
+                        setOnCompletionListener { isFinished = true }
+                        videoView = this
+                    }
+                },
             )
+
+            if (isFinished) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayCircle,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(72.dp),
+                    )
+                }
+            }
         }
     }
 }

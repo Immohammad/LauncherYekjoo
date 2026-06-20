@@ -5,6 +5,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -18,6 +19,7 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.animation.LinearInterpolator
+import android.webkit.JavascriptInterface
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -29,6 +31,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import app.lawnchair.LawnchairLauncher
+import com.android.launcher3.Insettable
 import com.android.systemui.plugins.shared.LauncherOverlayManager
 import com.android.systemui.plugins.shared.LauncherOverlayManager.LauncherOverlay
 import com.android.systemui.plugins.shared.LauncherOverlayManager.LauncherOverlayCallbacks
@@ -44,6 +47,7 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     private var currentProgress = 0f
     private var snapAnimator: ValueAnimator? = null
     private var wasOpenAtInteractionStart = false
+    @Volatile private var isScrollableUnderFinger = false
 
     private var hasLoaded = false
     private var lastRefreshTime = 0L
@@ -61,11 +65,25 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     private var currentWebUrl: String? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    // Self-canceling: stops re-posting when the panel is closed or the feed has never
+    // successfully loaded. Prevents the launcher from waking every 60s in the background.
     private val labelUpdateRunnable = object : Runnable {
         override fun run() {
+            if (currentProgress <= 0f || lastRefreshTime == 0L) return
             updateRefreshLabel()
             mainHandler.postDelayed(this, LABEL_UPDATE_INTERVAL_MS)
         }
+    }
+
+    private fun startLabelUpdatesIfNeeded() {
+        mainHandler.removeCallbacks(labelUpdateRunnable)
+        if (currentProgress > 0f && lastRefreshTime != 0L) {
+            mainHandler.postDelayed(labelUpdateRunnable, LABEL_UPDATE_INTERVAL_MS)
+        }
+    }
+
+    private fun stopLabelUpdates() {
+        mainHandler.removeCallbacks(labelUpdateRunnable)
     }
 
     companion object {
@@ -75,6 +93,25 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         // Swipe 25% of screen width to open; swipe 25% to close (close snaps below 0.75f)
         private const val OPEN_SNAP_THRESHOLD = 0.25f
         private const val CLOSE_SNAP_THRESHOLD = 0.75f
+        // Injected on every page load. Walks up the DOM from the touch target and reports
+        // whether the finger is on a horizontally-scrollable element (native overflow or
+        // common carousel libraries like Swiper.js). PanelLayout uses this to decide whether
+        // a left swipe should scroll the carousel or close the panel.
+        private const val SCROLL_DETECT_JS = """(function(){
+  if (window._yekjoScrollListenerAdded) return;
+  window._yekjoScrollListenerAdded = true;
+  document.addEventListener('touchstart', function(e) {
+    var el = e.target, h = false;
+    while (el && el !== document.body) {
+      var s = window.getComputedStyle(el);
+      if ((s.overflowX === 'scroll' || s.overflowX === 'auto') && el.scrollWidth > el.clientWidth + 2) { h = true; break; }
+      var cls = typeof el.className === 'string' ? el.className : '';
+      if (/swiper|carousel|slider/.test(cls)) { h = true; break; }
+      el = el.parentElement;
+    }
+    try { yekjoNative.onScrollableUnderFinger(h); } catch(_) {}
+  }, {capture: true, passive: true});
+})();"""
     }
 
     // Lawnchair forces the launcher Configuration to LTR. Workspace attaches the overlay
@@ -82,10 +119,16 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
     // on the LEFT of home and is opened by pulling the left edge (swipe finger right).
     // We mirror that here: panel always slides in from the left and the close gesture
     // is always swipe-left, so behavior matches in both Persian and English builds.
-    private inner class PanelLayout(context: Context) : FrameLayout(context) {
+    private inner class PanelLayout(context: Context) : FrameLayout(context), Insettable {
         // scaledPagingTouchSlop (~2× regular slop) gives the WebView's async renderer thread
         // enough time to call requestDisallowInterceptTouchEvent(true) before we intercept.
         private val touchSlop = ViewConfiguration.get(context).scaledPagingTouchSlop.toFloat()
+
+        // Implementing Insettable opts out of InsettableFrameLayout's default behavior, which
+        // would add insets.top to our topMargin. We want the panel to extend all the way to
+        // y=0 so the nav bar's dark background fills the status-bar area continuously; the
+        // bar applies its own top padding from setOnApplyWindowInsetsListener instead.
+        override fun setInsets(insets: Rect) {}
         private var startX = 0f
         private var startY = 0f
         private var isTouchTracking = false
@@ -97,10 +140,8 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                     startY = ev.y
                     isTouchTracking = false
                     wasOpenAtInteractionStart = currentProgress >= 0.99f
+                    isScrollableUnderFinger = false  // JS touchstart will override if needed
                     snapAnimator?.cancel()
-                    // DragLayer intercepts horizontal swipes for workspace scroll even when
-                    // the panel covers the screen. Block that so the WebView can handle
-                    // right swipes (e.g. carousel scroll) without the launcher stealing them.
                     if (wasOpenAtInteractionStart) {
                         parent?.requestDisallowInterceptTouchEvent(true)
                     }
@@ -109,7 +150,9 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                     if (!isTouchTracking) {
                         val dx = ev.x - startX
                         val dy = ev.y - startY
-                        val isSwipingToClose = dx < -touchSlop
+                        // Don't steal the gesture if the WebView reported a scrollable element
+                        // under the finger (JS bridge fires on touchstart, before any move).
+                        val isSwipingToClose = dx < -touchSlop && !isScrollableUnderFinger
                         if (isSwipingToClose && abs(dx) > abs(dy)) {
                             isTouchTracking = true
                             return true
@@ -138,6 +181,13 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                 }
             }
             return true
+        }
+    }
+
+    private inner class ScrollBridge {
+        @JavascriptInterface
+        fun onScrollableUnderFinger(scrollable: Boolean) {
+            isScrollableUnderFinger = scrollable
         }
     }
 
@@ -200,11 +250,13 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                 override fun onPageFinished(view: WebView?, url: String?) {
                     currentWebUrl = url ?: currentWebUrl
                     stopIconRotation()
+                    view?.evaluateJavascript(SCROLL_DETECT_JS, null)
                     if (currentLoadHadError) return
                     if (isRootUrl(url)) {
                         lastRefreshTime = System.currentTimeMillis()
                         refreshLabel?.visibility = View.VISIBLE
                         updateRefreshLabel()
+                        startLabelUpdatesIfNeeded()
                     } else {
                         refreshLabel?.visibility = View.GONE
                     }
@@ -256,6 +308,7 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 setSupportMultipleWindows(true)
             }
+            addJavascriptInterface(ScrollBridge(), "yekjoNative")
         }
         contentLayout.addView(wv)
         webView = wv
@@ -275,9 +328,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
                 applyPanelTranslation(0f)
             }
         }
-
-        mainHandler.removeCallbacks(labelUpdateRunnable)
-        mainHandler.postDelayed(labelUpdateRunnable, LABEL_UPDATE_INTERVAL_MS)
 
         launcher.setLauncherOverlay(this)
     }
@@ -299,27 +349,38 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         val buttonBg     = Color.argb(31,  aR, aG, aB)
         val buttonBorder = Color.argb(46,  aR, aG, aB)
         val labelColor   = Color.argb(217, minOf(255, aR + 40), minOf(255, aG + 30), minOf(255, aB + 30))
-        val bgTop        = Color.argb(247, 30, 30, 34)
-        val bgBottom     = Color.argb(242, 24, 24, 28)
-        fun barBg() = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(bgTop, bgBottom))
         val strokePx = Math.round(density)
 
-        val statusBarHeight = context.resources.let { res ->
+        // Fallback top padding used until the first WindowInsets dispatch arrives.
+        val fallbackStatusBarHeight = context.resources.let { res ->
             val id = res.getIdentifier("status_bar_height", "dimen", "android")
             if (id > 0) res.getDimensionPixelSize(id) else dp(24f)
         }
 
-        // Status bar height goes into top padding so there is no separate empty spacer view.
+        // Opaque bar sits above the WebView (no overlap with site content). Top padding
+        // is set dynamically from the real status-bar inset (cutout-aware), so the buttons
+        // land immediately below the system status-bar items with no empty band. Bottom
+        // padding is 0 so the buttons' bottom edges line up with the WebView's top edge.
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16f), statusBarHeight + dp(8f), dp(16f), dp(8f))
-            background = barBg()
+            setPadding(dp(16f), fallbackStatusBarHeight, dp(16f), 0)
+            setBackgroundColor(Color.parseColor("#121212"))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             )
             layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setOnApplyWindowInsetsListener { v, insets ->
+                val topInset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    insets.getInsets(WindowInsets.Type.statusBars()).top
+                } else {
+                    @Suppress("DEPRECATION")
+                    insets.systemWindowInsetTop
+                }
+                v.setPadding(dp(16f), topInset, dp(16f), 0)
+                insets
+            }
         }
 
         val back = TextView(context).apply {
@@ -388,11 +449,6 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         bar.addView(spacer)
         bar.addView(refreshArea)
         contentLayout.addView(bar)
-
-        contentLayout.addView(View(context).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
-            setBackgroundColor(Color.argb(15, 255, 255, 255))
-        })
 
         navBar = bar
         backButton = back
@@ -704,14 +760,17 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
 
     override fun onActivityResumed() {
         webView?.onResume()
+        startLabelUpdatesIfNeeded()
     }
 
     override fun onActivityPaused() {
         webView?.onPause()
+        stopLabelUpdates()
     }
 
     override fun onActivityStopped() {
         webView?.onPause()
+        stopLabelUpdates()
     }
 
     override fun onActivityDestroyed() {
