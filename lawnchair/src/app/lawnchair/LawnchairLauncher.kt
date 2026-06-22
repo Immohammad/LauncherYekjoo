@@ -152,6 +152,8 @@ class LawnchairLauncher : QuickstepLauncher() {
 
     private lateinit var colorScheme: ColorScheme
     private var hasBackGesture = false
+    private var showWallpaperCarousel = false
+    private var cachedLockHomeScreen = false
 
     val gestureController by unsafeLazy { GestureController(this) }
 
@@ -224,6 +226,12 @@ class LawnchairLauncher : QuickstepLauncher() {
         }
         preferenceManager2.backPressGestureHandler.onEach(launchIn = lifecycleScope) { handler ->
             hasBackGesture = handler !is GestureHandlerConfig.NoOp
+        }
+        preferenceManager2.launcherPopupOrder.onEach(launchIn = lifecycleScope) { order ->
+            showWallpaperCarousel = "+carousel" in order
+        }
+        preferenceManager2.lockHomeScreen.onEach(launchIn = lifecycleScope) {
+            cachedLockHomeScreen = it
         }
 
         LauncherOptionsPopup.restoreMissingPopupOptions(launcher)
@@ -345,8 +353,6 @@ class LawnchairLauncher : QuickstepLauncher() {
     }
 
     override fun showDefaultOptions(x: Float, y: Float) {
-        val showWallpaperCarousel = "+carousel" in preferenceManager2.launcherPopupOrder.firstBlocking()
-
         if (showWallpaperCarousel) {
             show<LawnchairLauncher>(
                 this,
@@ -492,6 +498,16 @@ class LawnchairLauncher : QuickstepLauncher() {
     }
 
     override fun getDefaultOverlay(): LauncherOverlayManager = defaultOverlay
+
+    override fun onBackPressed() {
+        if (defaultOverlay.handleBackPress()) return
+        super.onBackPressed()
+    }
+
+    override fun onStateBack() {
+        if (defaultOverlay.handleBackPress()) return
+        super.onStateBack()
+    }
 
     fun recreateIfNotScheduled() {
         if (sRestartFlags == 0) {

@@ -523,7 +523,7 @@ private fun SwipeHintCard() {
 
         Box(
             modifier = Modifier
-                .height(220.dp)
+                .height(264.dp)
                 .aspectRatio(9f / 16f)
                 .clip(MaterialTheme.shapes.medium)
                 .background(Color.Black)

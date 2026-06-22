@@ -480,6 +480,16 @@ class YekjoFeedOverlay(private val launcher: LawnchairLauncher) :
         if (wv.canGoBack()) wv.goBack()
     }
 
+    fun handleBackPress(): Boolean {
+        if (currentProgress < 0.99f) return false
+        if (!isRootUrl(currentWebUrl)) {
+            navigateBack()
+            return true
+        }
+        snapTo(0f)
+        return true
+    }
+
     private fun triggerInitialLoadIfNeeded() {
         if (hasLoaded) return
         val wv = webView ?: return
